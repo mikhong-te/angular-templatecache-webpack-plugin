@@ -1,62 +1,93 @@
-const fs = require("fs");
-const glob = require("glob");
-const path = require("path");
-const jsesc = require("jsesc");
-const globParent = require("glob-parent");
-const validateOptions = require("schema-utils");
+/* eslint-disable no-useless-escape */
+/* eslint-disable @typescript-eslint/explicit-member-accessibility */
+/* eslint-disable prettier/prettier */
+/* eslint-disable linebreak-style */
+const fs = require('fs');
+const glob = require('glob');
+const path = require('path');
+const jsesc = require('jsesc');
+const globParent = require('glob-parent');
+const { validate } = require('schema-utils');
+const webpack = require('webpack');
 const lodashTemplate = require('lodash.template');
+const htmlMinifier = require('html-minifier');
 
 const schema = {
-    "type": "object",
-    "properties": {
-        "source": {
-            "anyOf": [
+    type: 'object',
+    properties: {
+        source: {
+            anyOf: [
                 {
-                    "type": "string",
-                    "minLength": 1
+                    type: 'string',
+                    minLength: 1,
                 },
                 {
-                    "type": "array",
-                    "minItems": 1,
+                    type: 'array',
+                    minItems: 1,
                 },
-            ]
+            ],
         },
-        "root": {
-            "type": "string",
-            "minLength": 1
+        root: {
+            type: 'string',
+            minLength: 1,
         },
-        "outputFilename": {
-            "type": "string"
+        outputFilename: {
+            anyOf: [
+                {
+                    type: 'string',
+                    minLength: 1,
+                },
+                {
+                    type: 'array',
+                    minItems: 1,
+                },
+            ],
         },
-        "module": {
-            "type": "string"
+        module: {
+            type: 'string',
         },
-        "templateHeader": {
-            "type": "string"
+        templateHeader: {
+            type: 'string',
         },
-        "templateBody": {
-            "type": "string"
+        templateBody: {
+            type: 'string',
         },
-        "templateFooter": {
-            "type": "string"
+        templateFooter: {
+            type: 'string',
         },
-        "escapeOptions": {
-            "type": "object"
+        escapeOptions: {
+            type: 'object',
         },
-        "standalone": {
-            "type": "boolean"
+        standalone: {
+            type: 'boolean',
+        },
+        entries: {
+            type: 'array',
+            minLength: 1
+            // {
+            //     module: 'string',
+            //     root: 'string',
+            // }
+        },
+        isProd: {
+            type: 'boolean', // todo: should uglify
         }
     },
-    "additionalProperties": false
+    additionalProperties: false,
 };
 
 class AngularTemplateCacheWebpackPlugin {
-
     constructor(options) {
-        validateOptions(schema, options, 'AngularTemplateCacheWebpackPlugin');
+        validate(schema, options, { name: 'AngularTemplateCacheWebpackPlugin' });
 
-        const TEMPLATE_HEADER = 'angular.module(\'<%= module %>\'<%= standalone %>).run([\'$templateCache\', function($templateCache) {';
-        const TEMPLATE_BODY = '$templateCache.put(\'<%= url %>\',\'<%= contents %>\');';
+        // const TEMPLATE_HEADER =
+        //     "angular.module('<%= module %>'<%= standalone %>).run(['$templateCache', function($templateCache) {";
+        const TEMPLATE_HEADER =
+            'angular.module("app.templates", []).run(["$templateCache", function($templateCache) {$templateCache.put("/app/embed/embed.html","<div class=embed-widget-layout ng-class=\"{loading: widgetStatus.isDataLoading}\"> <te-widget-status-vue ng-if=\"!widgetStatus.getShouldWidgetBeShown() || widgetStatus.isDataLoading\" v-props-widget=widget v-props-widget-status=widgetStatus> </te-widget-status-vue> <div ng-if=\"widgetStatus.getShouldWidgetBeShown() && hasData\" class=\"clearfix widget-screenshot-container\"> <te-widget-manager-vue ng-if=selectors.getHaveWidgetsLoaded()></te-widget-manager-vue> </div> </div>");';
+        const TEMPLATE_HEADER_ICONS = 'angular.module("te-embed-icons", []).run(["$templateCache", function($templateCache) {$templateCache.put("/static/svg/embed-icons/device-group-badge.svg","<svg width=\"27\" height=\"16\" viewBox=\"0 0 27 12\" xmlns=\"http://www.w3.org/2000/svg\"><rect fill=\"#69C\" x=\"3\" y=\".6\" width=\"18\" height=\"12\" rx=\"6\" transform=\"translate(-2)\" fill-rule=\"evenodd\"/></svg>");';
+        //     "$templateCache.put('/app/embed/embed.html','<div class=embed-widget-layout ng-class='{loading: widgetStatus.isDataLoading}'> <te-widget-status-vue ng-if='!widgetStatus.getShouldWidgetBeShown() || widgetStatus.isDataLoading' v-props-widget=widget v-props-widget-status=widgetStatus> </te-widget-status-vue> <div ng-if='widgetStatus.getShouldWidgetBeShown() && hasData' class='clearfix widget-screenshot-container'> <te-widget-manager-vue ng-if=selectors.getHaveWidgetsLoaded()></te-widget-manager-vue> </div> </div>');";
+        const TEMPLATE_BODY = '$templateCache.put("<%= url %>","<%= contents %>");';
+
         const TEMPLATE_FOOTER = '}]);';
         const DEFAULT_FILENAME = 'templates.js';
         const DEFAULT_MODULE = 'templates';
@@ -81,47 +112,59 @@ class AngularTemplateCacheWebpackPlugin {
     }
 
     apply(compiler) {
+        const outputNormal = {};
 
-        compiler.hooks.thisCompilation.tap('AngularTemplateCacheWebpackPlugin', (compilation) => {
-            compilation.hooks.additionalAssets.tapAsync('AngularTemplateCacheWebpackPlugin', (callback) => {
+        compiler.hooks.thisCompilation.tap('AngularTemplateCacheWebpackPlugin', compilation => {
+            this.files.forEach(f => compilation.fileDependencies.add(path.join(compiler.context, f)));
+            compilation.hooks.additionalAssets.tapAsync('AngularTemplateCacheWebpackPlugin', cb => {
+                this.processTemplates();
+
+                const dest = compiler.options.output.path;
+
+                const outputPaths = [];
+                this.options.outputFilename.forEach((folder) => outputPaths.push(path.resolve(dest, folder)));
+                // const outputPath = path.resolve(dest, this.options.outputFilename);
                 let cachedTemplates = '';
 
-                this.templatelist.forEach((template) => {
+                this.templatelist.forEach(template => {
                     cachedTemplates += template + '\n';
                 });
 
-                // Insert this list into the webpack build as a new file asset:
-                compilation.assets[this.options.outputFilename] = {
-                    source: function () {
-                        return cachedTemplates;
-                    },
-                    size: function () {
-                        return cachedTemplates.length;
-                    },
-
+                outputNormal[outputPaths[0]] = {
+                    filename: outputPaths[0],
+                    content: cachedTemplates,
+                    size: cachedTemplates.length,
                 };
 
-                callback();
-            });
+                outputNormal[outputPaths[1]] = {
+                    filename: outputPaths[1],
+                    content: cachedTemplates,
+                    size: cachedTemplates.length,
+                };
 
+                console.log({ outputPaths });
+                for (const [key, value] of Object.entries(outputNormal)) {
+                    compilation.emitAsset(value.filename, new webpack.sources.RawSource(value.content));
+                }
+                cb();
+            });
         });
     }
 
     init() {
-        this.templatelist = [];
+        this.files = typeof this.options.source === 'string' ? glob.sync(this.options.source) : this.options.source;
 
-        this.files = typeof this.options.source === 'string'
-            ? glob.sync(this.options.source)
-            : this.options.source;
+        const globbedFiles = [];
+        this.files.forEach((pattern) => globbedFiles.push(...glob.sync(pattern)));
+        this.files = globbedFiles;
 
         this.templateBody = this.options.templateBody;
         this.templateHeader = this.options.templateHeader;
         this.templateFooter = this.options.templateFooter;
-
-        this.processTemplates();
     }
 
     processTemplates() {
+        this.templatelist = [];
         this.processHeader();
         this.processBody();
         this.processFooter();
@@ -130,30 +173,74 @@ class AngularTemplateCacheWebpackPlugin {
     processHeader() {
         let header = lodashTemplate(this.templateHeader)({
             module: this.options.module,
-            standalone: this.options.standalone ? ', []' : ''
+            standalone: this.options.standalone ? ', []' : '',
         });
         this.templatelist.unshift(header);
     }
 
     processBody() {
-        this.files.forEach((file) => {
+        this.files.forEach(file => {
             let tpl = {};
             tpl.source = fs.readFileSync(file);
+            // tpl.source = htmlmin(tpl.source);
+            tpl.source = htmlMinifier.minify(
+                tpl.source.toString(),
+                {
+                // collapseBooleanAttributes: false,
+                // collapseWhitespace: true,
+                // conservativeCollapse: true,
+                // removeAttributeQuotes: true,
+                // removeComments: true,
+                // removeEmptyAttributes: false,
+                // // Because bootstrap styles input[type="text"]
+                // removeRedundantAttributes: false,
+                // removeScriptTypeAttributes: true,
+                // removeStyleLinkTypeAttributes: true,
+                collapseBooleanAttributes: true,
+                collapseInlineTagWhitespace: false,
+                collapseWhitespace: true,
+                conservativeCollapse: false,
+                // html5: true,
+                includeAutoGeneratedTags: false,
+                keepClosingSlash: false,
+                preventAttributesEscaping: false,
+                processConditionalComments: true,
+                // processScripts: ["text/html"],
+                removeAttributeQuotes: true,
+                removeComments: true,
+                removeEmptyAttributes: true,
+                removeEmptyElements: false,
+                removeOptionalTags: true,
+                removeRedundantAttributes: true,
+                removeScriptTypeAttributes: true,
+                removeStyleLinkTypeAttributes: true,
+                removeTagWhitespace: true,
+                sortAttributes: true,
+                sortClassName: true,
+                trimCustomFragments: true,
+                useShortDoctype: true,
+                },
+            );
+            // todo: ctrl+f \u in templates.js
 
             let htmlRootDir = globParent(this.options.source);
-            let filename = path.relative(htmlRootDir, file);
+            let filename = path.posix.relative(htmlRootDir, file);
+            let url = path.posix.join(this.options.root, filename);
+            url = url.replace('../webapp/', '');
 
-            let url = path.join(this.options.root, filename);
             if (this.options.root === '.' || this.options.root.indexOf('./') === 0) {
                 url = './' + url;
             }
-
+            url = '/' + url;
             tpl.source = lodashTemplate(this.templateBody)({
                 url: url,
-                contents: jsesc(tpl.source.toString('utf8'), this.options.escapeOptions),
-                file: file
+                contents: jsesc(tpl.source.toString('utf8'), this.options.escapeOptions), // \u issue, good on spacing
+                // contents: tpl.source.toString('utf8'),
+                // contents: tpl.source, // spacing issue 
+                file: file,
             });
 
+            // tpl.source = tpl.source.replace('\n', '');
             this.templatelist.push(tpl.source);
         });
     }
