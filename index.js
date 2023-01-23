@@ -31,6 +31,18 @@ const schema = {
             type: 'string',
             minLength: 1,
         },
+        destination: {
+            anyOf: [
+                {
+                    type: 'string',
+                    minLength: 1,
+                },
+                {
+                    type: 'array',
+                    minItems: 1,
+                },
+            ],
+        },
         outputFilename: {
             anyOf: [
                 {
@@ -45,6 +57,30 @@ const schema = {
         },
         module: {
             type: 'string',
+        },
+        modules: {
+            type: 'array',
+            minItems: 1,
+            properties: {
+                moduleName: {
+                    type: 'string',
+                },
+                outputFilename: {
+                    type: 'string'
+                },
+                source: {
+                    anyOf: [
+                        {
+                            type: 'string',
+                            minLength: 1,
+                        },
+                        {
+                            type: 'array',
+                            minItems: 1,
+                        },
+                    ]
+                }
+            }
         },
         templateHeader: {
             type: 'string',
@@ -61,14 +97,6 @@ const schema = {
         standalone: {
             type: 'boolean',
         },
-        entries: {
-            type: 'array',
-            minLength: 1
-            // {
-            //     module: 'string',
-            //     root: 'string',
-            // }
-        },
         isProd: {
             type: 'boolean', // todo: should uglify
         }
@@ -80,11 +108,13 @@ class AngularTemplateCacheWebpackPlugin {
     constructor(options) {
         validate(schema, options, { name: 'AngularTemplateCacheWebpackPlugin' });
 
-        // const TEMPLATE_HEADER =
-        //     "angular.module('<%= module %>'<%= standalone %>).run(['$templateCache', function($templateCache) {";
+        // todo: if hardcoding templates, make sure backslashes are escaped
+
         const TEMPLATE_HEADER =
-            'angular.module("app.templates", []).run(["$templateCache", function($templateCache) {$templateCache.put("/app/embed/embed.html","<div class=embed-widget-layout ng-class=\"{loading: widgetStatus.isDataLoading}\"> <te-widget-status-vue ng-if=\"!widgetStatus.getShouldWidgetBeShown() || widgetStatus.isDataLoading\" v-props-widget=widget v-props-widget-status=widgetStatus> </te-widget-status-vue> <div ng-if=\"widgetStatus.getShouldWidgetBeShown() && hasData\" class=\"clearfix widget-screenshot-container\"> <te-widget-manager-vue ng-if=selectors.getHaveWidgetsLoaded()></te-widget-manager-vue> </div> </div>");';
-        const TEMPLATE_HEADER_ICONS = 'angular.module("te-embed-icons", []).run(["$templateCache", function($templateCache) {$templateCache.put("/static/svg/embed-icons/device-group-badge.svg","<svg width=\"27\" height=\"16\" viewBox=\"0 0 27 12\" xmlns=\"http://www.w3.org/2000/svg\"><rect fill=\"#69C\" x=\"3\" y=\".6\" width=\"18\" height=\"12\" rx=\"6\" transform=\"translate(-2)\" fill-rule=\"evenodd\"/></svg>");';
+            "angular.module('<%= module %>'<%= standalone %>).run(['$templateCache', function($templateCache) {";
+        // const TEMPLATE_HEADER =
+        //     'angular.module("app.templates", []).run(["$templateCache", function($templateCache) {$templateCache.put("/app/embed/embed.html","<div class=embed-widget-layout ng-class=\\"{loading: widgetStatus.isDataLoading}\\"> <te-widget-status-vue ng-if=\\"!widgetStatus.getShouldWidgetBeShown() || widgetStatus.isDataLoading\\" v-props-widget=widget v-props-widget-status=widgetStatus> </te-widget-status-vue> <div ng-if=\\"widgetStatus.getShouldWidgetBeShown() && hasData\\" class=\\"clearfix widget-screenshot-container\\"> <te-widget-manager-vue ng-if=selectors.getHaveWidgetsLoaded()></te-widget-manager-vue> </div> </div>");';
+        // const TEMPLATE_HEADER_ICONS = 'angular.module("te-embed-icons", []).run(["$templateCache", function($templateCache) {$templateCache.put("/static/svg/embed-icons/device-group-badge.svg","<svg width=\"27\" height=\"16\" viewBox=\"0 0 27 12\" xmlns=\"http://www.w3.org/2000/svg\"><rect fill=\"#69C\" x=\"3\" y=\".6\" width=\"18\" height=\"12\" rx=\"6\" transform=\"translate(-2)\" fill-rule=\"evenodd\"/></svg>");';
         //     "$templateCache.put('/app/embed/embed.html','<div class=embed-widget-layout ng-class='{loading: widgetStatus.isDataLoading}'> <te-widget-status-vue ng-if='!widgetStatus.getShouldWidgetBeShown() || widgetStatus.isDataLoading' v-props-widget=widget v-props-widget-status=widgetStatus> </te-widget-status-vue> <div ng-if='widgetStatus.getShouldWidgetBeShown() && hasData' class='clearfix widget-screenshot-container'> <te-widget-manager-vue ng-if=selectors.getHaveWidgetsLoaded()></te-widget-manager-vue> </div> </div>');";
         const TEMPLATE_BODY = '$templateCache.put("<%= url %>","<%= contents %>");';
 
@@ -112,6 +142,7 @@ class AngularTemplateCacheWebpackPlugin {
     }
 
     apply(compiler) {
+        console.log('apply')
         const outputNormal = {};
 
         compiler.hooks.thisCompilation.tap('AngularTemplateCacheWebpackPlugin', compilation => {
@@ -119,6 +150,7 @@ class AngularTemplateCacheWebpackPlugin {
             compilation.hooks.additionalAssets.tapAsync('AngularTemplateCacheWebpackPlugin', cb => {
                 this.processTemplates();
 
+                console.log(this.files);
                 const dest = compiler.options.output.path;
 
                 const outputPaths = [];
@@ -141,8 +173,8 @@ class AngularTemplateCacheWebpackPlugin {
                     content: cachedTemplates,
                     size: cachedTemplates.length,
                 };
-
                 console.log({ outputPaths });
+                console.log({ outputNormal });
                 for (const [key, value] of Object.entries(outputNormal)) {
                     compilation.emitAsset(value.filename, new webpack.sources.RawSource(value.content));
                 }
@@ -152,8 +184,9 @@ class AngularTemplateCacheWebpackPlugin {
     }
 
     init() {
+        console.log('init');
         this.files = typeof this.options.source === 'string' ? glob.sync(this.options.source) : this.options.source;
-
+        console.log(this.files.length);
         const globbedFiles = [];
         this.files.forEach((pattern) => globbedFiles.push(...glob.sync(pattern)));
         this.files = globbedFiles;
@@ -186,26 +219,14 @@ class AngularTemplateCacheWebpackPlugin {
             tpl.source = htmlMinifier.minify(
                 tpl.source.toString(),
                 {
-                // collapseBooleanAttributes: false,
-                // collapseWhitespace: true,
-                // conservativeCollapse: true,
-                // removeAttributeQuotes: true,
-                // removeComments: true,
-                // removeEmptyAttributes: false,
-                // // Because bootstrap styles input[type="text"]
-                // removeRedundantAttributes: false,
-                // removeScriptTypeAttributes: true,
-                // removeStyleLinkTypeAttributes: true,
                 collapseBooleanAttributes: true,
                 collapseInlineTagWhitespace: false,
                 collapseWhitespace: true,
                 conservativeCollapse: false,
-                // html5: true,
                 includeAutoGeneratedTags: false,
                 keepClosingSlash: false,
                 preventAttributesEscaping: false,
                 processConditionalComments: true,
-                // processScripts: ["text/html"],
                 removeAttributeQuotes: true,
                 removeComments: true,
                 removeEmptyAttributes: true,
@@ -221,7 +242,6 @@ class AngularTemplateCacheWebpackPlugin {
                 useShortDoctype: true,
                 },
             );
-            // todo: ctrl+f \u in templates.js
 
             let htmlRootDir = globParent(this.options.source);
             let filename = path.posix.relative(htmlRootDir, file);
@@ -234,9 +254,7 @@ class AngularTemplateCacheWebpackPlugin {
             url = '/' + url;
             tpl.source = lodashTemplate(this.templateBody)({
                 url: url,
-                contents: jsesc(tpl.source.toString('utf8'), this.options.escapeOptions), // \u issue, good on spacing
-                // contents: tpl.source.toString('utf8'),
-                // contents: tpl.source, // spacing issue 
+                contents: jsesc(tpl.source.toString('utf8'), this.options.escapeOptions),
                 file: file,
             });
 
