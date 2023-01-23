@@ -129,6 +129,7 @@ class AngularTemplateCacheWebpackPlugin {
             root: userOptions.root === undefined ? '' : userOptions.root,
             outputFilename: userOptions.outputFilename === undefined ? DEFAULT_FILENAME : userOptions.outputFilename,
             module: userOptions.module === undefined ? DEFAULT_MODULE : userOptions.module,
+            modules: userOptions.module === undefined ? DEFAULT_MODULE : userOptions.modules,
             templateHeader: userOptions.templateHeader === undefined ? TEMPLATE_HEADER : userOptions.templateHeader,
             templateBody: userOptions.templateBody === undefined ? TEMPLATE_BODY : userOptions.templateBody,
             templateFooter: userOptions.templateFooter === undefined ? TEMPLATE_FOOTER : userOptions.templateFooter,
@@ -146,50 +147,63 @@ class AngularTemplateCacheWebpackPlugin {
         const outputNormal = {};
 
         compiler.hooks.thisCompilation.tap('AngularTemplateCacheWebpackPlugin', compilation => {
-            this.files.forEach(f => compilation.fileDependencies.add(path.join(compiler.context, f)));
-            compilation.hooks.additionalAssets.tapAsync('AngularTemplateCacheWebpackPlugin', cb => {
-                this.processTemplates();
+            // TODO: loop through modules first, and then nest forEach in there
+            this.modules.forEach( module => {
+                // console.log(module);
+                this.files.forEach(f => compilation.fileDependencies.add(path.join(compiler.context, f)));
+                compilation.hooks.additionalAssets.tapAsync('AngularTemplateCacheWebpackPlugin', cb => {
+                    this.processTemplates();
 
-                console.log(this.files);
-                const dest = compiler.options.output.path;
+                    // console.log(this.files);
+                    const dest = compiler.options.output.path;
 
-                const outputPaths = [];
-                this.options.outputFilename.forEach((folder) => outputPaths.push(path.resolve(dest, folder)));
-                // const outputPath = path.resolve(dest, this.options.outputFilename);
-                let cachedTemplates = '';
+                    const outputPaths = [];
+                    this.options.outputFilename.forEach((folder) => outputPaths.push(path.resolve(dest, folder)));
+                    // const outputPath = path.resolve(dest, this.options.outputFilename);
+                    let cachedTemplates = '';
 
-                this.templatelist.forEach(template => {
-                    cachedTemplates += template + '\n';
+                    this.templatelist.forEach(template => {
+                        cachedTemplates += template + '\n';
+                    });
+
+                    outputNormal[outputPaths[0]] = {
+                        filename: outputPaths[0],
+                        content: cachedTemplates,
+                        size: cachedTemplates.length,
+                    };
+
+                    outputNormal[outputPaths[1]] = {
+                        filename: outputPaths[1],
+                        content: cachedTemplates,
+                        size: cachedTemplates.length,
+                    };
+
+
+                    for (const [key, value] of Object.entries(outputNormal)) {
+                        compilation.emitAsset(value.filename, new webpack.sources.RawSource(value.content));
+                    }
+                    cb();
                 });
-
-                outputNormal[outputPaths[0]] = {
-                    filename: outputPaths[0],
-                    content: cachedTemplates,
-                    size: cachedTemplates.length,
-                };
-
-                outputNormal[outputPaths[1]] = {
-                    filename: outputPaths[1],
-                    content: cachedTemplates,
-                    size: cachedTemplates.length,
-                };
-                console.log({ outputPaths });
-                console.log({ outputNormal });
-                for (const [key, value] of Object.entries(outputNormal)) {
-                    compilation.emitAsset(value.filename, new webpack.sources.RawSource(value.content));
-                }
-                cb();
             });
-        });
-    }
+            });
+        }
 
     init() {
-        console.log('init');
-        this.files = typeof this.options.source === 'string' ? glob.sync(this.options.source) : this.options.source;
-        console.log(this.files.length);
-        const globbedFiles = [];
-        this.files.forEach((pattern) => globbedFiles.push(...glob.sync(pattern)));
-        this.files = globbedFiles;
+        // this.files = typeof this.options.source === 'string' ? glob.sync(this.options.source) : this.options.source;
+        this.files = {};
+        this.modules = this.options.modules;
+        this.modules.forEach(module => {
+            const moduleSourceFiles = typeof module.source === 'string' ? glob.sync(module.source) : module.source;
+            this.files[module.moduleName] = [];
+            if (Array.isArray(moduleSourceFiles)) {
+                moduleSourceFiles.forEach((pattern) => this.files[module.moduleName].push(...glob.sync(pattern)));
+            } else {
+                this.files[module.moduleName].push(module.source);
+            }
+        });
+        // const globbedFiles = [];
+        // this.files.forEach((pattern) => globbedFiles.push(...glob.sync(pattern)));
+        // this.files = globbedFiles;
 
         this.templateBody = this.options.templateBody;
         this.templateHeader = this.options.templateHeader;
